@@ -189,4 +189,4 @@ powershell.exe -ExecutionPolicy Bypass -File .\Invoke-SecureBootCA2023Update.ps1
 ### Update Certificates (reboots automaticly)
 ```powershell
 powershell.exe -ExecutionPolicy Bypass -File .\Invoke-SecureBootCA2023Update.ps1
----
+```
