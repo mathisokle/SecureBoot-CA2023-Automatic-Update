@@ -1,9 +1,12 @@
-﻿#requires -RunAsAdministrator
+#requires -RunAsAdministrator
 [CmdletBinding()]
 param(
     [switch]$ContinueAfterReboot,
     [switch]$NoReboot,
-    [switch]$Check
+    [switch]$Check,
+    [switch]$ResetState,
+    [switch]$DebugSecureBootAscii,
+    [switch]$ForceRetryKek
 )
 
 $ErrorActionPreference = 'Stop'
@@ -18,9 +21,22 @@ $LogFile           = Join-Path $StateRoot 'SecureBootCA2023.log'
 $BitLockerFile     = Join-Path $StateRoot 'BitLocker-Protectors.txt'
 $TranscriptFile    = Join-Path $StateRoot 'Transcript.txt'
 $EfiMount          = 'S:'
-$BootCopy          = 'C:\bootmgfw_2023.efi'
 $RunOnceName       = 'SecureBootCA2023Continue'
 $ThisScript        = $MyInvocation.MyCommand.Path
+$TempBootCopyRoot  = Join-Path $env:TEMP 'SecureBootCA2023'
+$MaxKekRetries     = 2
+
+# Update flags
+$UpdateFlagKEK     = 0x0004
+$UpdateFlagDB      = 0x0040
+$UpdateFlagBootMgr = 0x0100
+
+# Stage map
+$StageInitial            = 0
+$StageValidateKEK        = 1
+$StageValidateDB         = 2
+$StageValidateBootMgr    = 3
+$StageFinalConfirmation  = 4
 
 # -------------------------------------------------------------------
 # Helpers
@@ -48,6 +64,10 @@ function Ensure-StateRoot {
     if (-not (Test-Path $StateRoot)) {
         New-Item -Path $StateRoot -ItemType Directory -Force | Out-Null
     }
+
+    if (-not (Test-Path $TempBootCopyRoot)) {
+        New-Item -Path $TempBootCopyRoot -ItemType Directory -Force | Out-Null
+    }
 }
 
 function Test-IsAdmin {
@@ -68,12 +88,15 @@ function Save-State {
         [int]$Stage,
 
         [Parameter(Mandatory)]
-        [string]$LastAction
+        [string]$LastAction,
+
+        [int]$RetryCount = 0
     )
 
     $obj = [pscustomobject]@{
         Stage             = $Stage
         LastAction        = $LastAction
+        RetryCount        = $RetryCount
         UpdatedAt         = (Get-Date).ToString('o')
         ScriptPath        = $ThisScript
         ComputerName      = $env:COMPUTERNAME
@@ -86,8 +109,9 @@ function Save-State {
 function Load-State {
     if (-not (Test-Path $StateFile)) {
         return [pscustomobject]@{
-            Stage             = 0
+            Stage             = $StageInitial
             LastAction        = 'Initial'
+            RetryCount        = 0
             UpdatedAt         = $null
             ScriptPath        = $ThisScript
             ComputerName      = $env:COMPUTERNAME
@@ -126,6 +150,11 @@ function Unregister-Continuation {
         -Path 'HKLM:\Software\Microsoft\Windows\CurrentVersion\RunOnce' `
         -Name $RunOnceName `
         -ErrorAction SilentlyContinue
+}
+
+function Cleanup-CompletionState {
+    Unregister-Continuation
+    Remove-State
 }
 
 function Restart-Now {
@@ -167,20 +196,108 @@ function Get-ServicingState {
     }
 }
 
-function Test-DbContainsCA2023 {
+function Get-SecureBootTextRepresentations {
+    param(
+        [Parameter(Mandatory)]
+        [ValidateSet('PK','KEK','db','dbx')]
+        [string]$Name
+    )
+
     try {
-        $db = Get-SecureBootUEFI -Name db -ErrorAction Stop
-        if (-not $db -or -not $db.Bytes) {
-            return $false
+        $obj = Get-SecureBootUEFI -Name $Name -ErrorAction Stop
+        if (-not $obj -or -not $obj.Bytes) {
+            return $null
         }
 
-        $ascii = [System.Text.Encoding]::ASCII.GetString($db.Bytes)
-        return ($ascii -match 'Windows UEFI CA 2023')
+        $bytes = $obj.Bytes
+
+        $ascii   = [System.Text.Encoding]::ASCII.GetString($bytes)
+        $unicode = [System.Text.Encoding]::Unicode.GetString($bytes)
+        $utf8    = [System.Text.Encoding]::UTF8.GetString($bytes)
+
+        [pscustomobject]@{
+            Ascii   = $ascii
+            Unicode = $unicode
+            Utf8    = $utf8
+            Joined  = ($ascii + "`n" + $unicode + "`n" + $utf8)
+        }
     }
     catch {
-        Write-Log "Failed to read Secure Boot DB: $($_.Exception.Message)" 'WARN'
+        Write-Log "Failed to read Secure Boot variable '$Name': $($_.Exception.Message)" 'WARN'
+        return $null
+    }
+}
+
+function Show-SecureBootAsciiPreview {
+    param(
+        [Parameter(Mandatory)]
+        [ValidateSet('PK','KEK','db','dbx')]
+        [string]$Name
+    )
+
+    $text = Get-SecureBootTextRepresentations -Name $Name
+    if (-not $text) {
+        Write-Log "No readable text data found for Secure Boot variable '$Name'." 'WARN'
+        return
+    }
+
+    $previewLength = 500
+
+    $asciiPreview   = $text.Ascii.Substring(0, [Math]::Min($previewLength, $text.Ascii.Length))
+    $unicodePreview = $text.Unicode.Substring(0, [Math]::Min($previewLength, $text.Unicode.Length))
+    $utf8Preview    = $text.Utf8.Substring(0, [Math]::Min($previewLength, $text.Utf8.Length))
+
+    Write-Log "ASCII preview for ${Name}: $asciiPreview"
+    Write-Log "Unicode preview for ${Name}: $unicodePreview"
+    Write-Log "UTF8 preview for ${Name}: $utf8Preview"
+}
+
+function Test-KekContainsCA2023 {
+    $text = Get-SecureBootTextRepresentations -Name 'KEK'
+    if (-not $text) {
         return $false
     }
+
+    if ($DebugSecureBootAscii) {
+        $previewLength = 400
+
+        $asciiPreview   = $text.Ascii.Substring(0, [Math]::Min($previewLength, $text.Ascii.Length))
+        $unicodePreview = $text.Unicode.Substring(0, [Math]::Min($previewLength, $text.Unicode.Length))
+        $utf8Preview    = $text.Utf8.Substring(0, [Math]::Min($previewLength, $text.Utf8.Length))
+
+        Write-Log "Secure Boot KEK ASCII preview: $asciiPreview"
+        Write-Log "Secure Boot KEK Unicode preview: $unicodePreview"
+        Write-Log "Secure Boot KEK UTF8 preview: $utf8Preview"
+    }
+
+    $joined = $text.Joined
+
+    return (
+        $joined -match 'Microsoft Corporation KEK\s*2K\s*CA\s*2023' -or
+        $joined -match 'KEK\s*2K\s*CA\s*2023' -or
+        ($joined -match 'Microsoft' -and $joined -match 'KEK' -and $joined -match '2023')
+    )
+}
+
+function Test-DbContainsCA2023 {
+    $text = Get-SecureBootTextRepresentations -Name 'db'
+    if (-not $text) {
+        return $false
+    }
+
+    if ($DebugSecureBootAscii) {
+        $previewLength = 400
+
+        $asciiPreview   = $text.Ascii.Substring(0, [Math]::Min($previewLength, $text.Ascii.Length))
+        $unicodePreview = $text.Unicode.Substring(0, [Math]::Min($previewLength, $text.Unicode.Length))
+        $utf8Preview    = $text.Utf8.Substring(0, [Math]::Min($previewLength, $text.Utf8.Length))
+
+        Write-Log "Secure Boot DB ASCII preview: $asciiPreview"
+        Write-Log "Secure Boot DB Unicode preview: $unicodePreview"
+        Write-Log "Secure Boot DB UTF8 preview: $utf8Preview"
+    }
+
+    return ($text.Joined -match 'Windows UEFI CA 2023')
 }
 
 function Test-SecureBootTask {
@@ -289,6 +406,14 @@ function Dismount-EfiPartition {
     }
 }
 
+function Get-TempBootCopyPath {
+    if (-not (Test-Path $TempBootCopyRoot)) {
+        New-Item -Path $TempBootCopyRoot -ItemType Directory -Force | Out-Null
+    }
+
+    return (Join-Path $TempBootCopyRoot ("bootmgfw_{0}_{1}.efi" -f $env:COMPUTERNAME, [guid]::NewGuid().ToString('N')))
+}
+
 function Copy-BootManager {
     $source = Join-Path $EfiMount 'EFI\Microsoft\Boot\bootmgfw.efi'
 
@@ -296,8 +421,21 @@ function Copy-BootManager {
         throw "EFI boot manager not found at $source"
     }
 
-    Write-Log "Copying $source to $BootCopy"
-    Copy-Item -Path $source -Destination $BootCopy -Force
+    $destination = Get-TempBootCopyPath
+    Write-Log "Copying $source to $destination"
+    Copy-Item -Path $source -Destination $destination -Force
+
+    return $destination
+}
+
+function Remove-BootManagerCopy {
+    param(
+        [string]$FilePath
+    )
+
+    if ($FilePath -and (Test-Path $FilePath)) {
+        Remove-Item -Path $FilePath -Force -ErrorAction SilentlyContinue
+    }
 }
 
 function Test-BootManagerCertChain {
@@ -334,6 +472,24 @@ function Test-BootManagerCertChain {
     }
 }
 
+function Get-BootManagerHasCA2023 {
+    $bootCopy = $null
+    try {
+        Mount-EfiPartition
+        try {
+            $bootCopy = Copy-BootManager
+        }
+        finally {
+            Dismount-EfiPartition
+        }
+
+        return (Test-BootManagerCertChain -FilePath $bootCopy)
+    }
+    finally {
+        Remove-BootManagerCopy -FilePath $bootCopy
+    }
+}
+
 function Show-CurrentStatus {
     $state = Get-ServicingState
     Write-Log ("Servicing state: Capable={0}, Status={1}, Error={2}" -f `
@@ -341,12 +497,29 @@ function Show-CurrentStatus {
         $state.UEFICA2023Status,
         $state.UEFICA2023ErrorHex)
 
-    $dbHas2023 = Test-DbContainsCA2023
+    $kekHas2023 = Test-KekContainsCA2023
+    $dbHas2023  = Test-DbContainsCA2023
+
+    Write-Log "Secure Boot KEK contains 2023 CA: $kekHas2023"
     Write-Log "Secure Boot DB contains 'Windows UEFI CA 2023': $dbHas2023"
+}
+
+function Test-IsKekStuck {
+    $serv = Get-ServicingState
+
+    return (
+        -not (Test-KekContainsCA2023) -and
+        $serv.UEFICA2023Status -eq 'InProgress' -and
+        (
+            $serv.UEFICA2023ErrorHex -eq '0x800703E6' -or
+            $serv.UEFICA2023ErrorHex -eq '0x8007015E'
+        )
+    )
 }
 
 function Get-ComplianceState {
     $secureBootEnabled = $false
+    $kekHas2023 = $false
     $dbHas2023 = $false
     $bootMgrHas2023 = $false
     $taskExists = $false
@@ -366,18 +539,11 @@ function Get-ComplianceState {
     }
 
     $serv = Get-ServicingState
-    $dbHas2023 = Test-DbContainsCA2023
+    $kekHas2023 = Test-KekContainsCA2023
+    $dbHas2023  = Test-DbContainsCA2023
 
     try {
-        Mount-EfiPartition
-        try {
-            Copy-BootManager
-        }
-        finally {
-            Dismount-EfiPartition
-        }
-
-        $bootMgrHas2023 = Test-BootManagerCertChain -FilePath $BootCopy
+        $bootMgrHas2023 = Get-BootManagerHasCA2023
     }
     catch {
         $reason += "Boot manager inspection failed: $($_.Exception.Message)"
@@ -387,12 +553,16 @@ function Get-ComplianceState {
         $needsUpdate = $false
         $reason += "Host is not eligible because Secure Boot is not enabled."
     }
-    elseif ($dbHas2023 -and $bootMgrHas2023) {
+    elseif ($kekHas2023 -and $dbHas2023 -and $bootMgrHas2023) {
         $needsUpdate = $false
-        $reason += "DB and boot manager already trust Windows UEFI CA 2023."
+        $reason += "KEK, DB, and boot manager already trust Windows UEFI CA 2023."
     }
     else {
         $needsUpdate = $true
+
+        if (-not $kekHas2023) {
+            $reason += "Secure Boot KEK does not contain 2023 CA."
+        }
 
         if (-not $dbHas2023) {
             $reason += "Secure Boot DB does not contain Windows UEFI CA 2023."
@@ -400,6 +570,10 @@ function Get-ComplianceState {
 
         if (-not $bootMgrHas2023) {
             $reason += "Boot manager is not signed through Windows UEFI CA 2023."
+        }
+
+        if (Test-IsKekStuck) {
+            $reason += "KEK update appears stuck in firmware/platform state."
         }
     }
 
@@ -409,6 +583,7 @@ function Get-ComplianceState {
         WindowsUEFICA2023Capable = $serv.WindowsUEFICA2023Capable
         UEFICA2023Status         = $serv.UEFICA2023Status
         UEFICA2023ErrorHex       = $serv.UEFICA2023ErrorHex
+        KekContainsCA2023        = $kekHas2023
         DbContainsCA2023         = $dbHas2023
         BootManagerHasCA2023     = $bootMgrHas2023
         NeedsUpdate              = $needsUpdate
@@ -418,6 +593,7 @@ function Get-ComplianceState {
 
 function Get-FinalSummary {
     $serv = Get-ServicingState
+    $kekHas2023 = $false
     $dbHas2023 = $false
     $bootMgrHas2023 = $false
     $taskExists = $false
@@ -439,6 +615,13 @@ function Get-FinalSummary {
     }
 
     try {
+        $kekHas2023 = Test-KekContainsCA2023
+    }
+    catch {
+        $reasons += "Secure Boot KEK could not be checked."
+    }
+
+    try {
         $dbHas2023 = Test-DbContainsCA2023
     }
     catch {
@@ -446,22 +629,18 @@ function Get-FinalSummary {
     }
 
     try {
-        Mount-EfiPartition
-        try {
-            Copy-BootManager
-        }
-        finally {
-            Dismount-EfiPartition
-        }
-
-        $bootMgrHas2023 = Test-BootManagerCertChain -FilePath $BootCopy
+        $bootMgrHas2023 = Get-BootManagerHasCA2023
     }
     catch {
         $reasons += "Boot manager certificate chain could not be checked: $($_.Exception.Message)"
     }
 
+    if (Test-IsKekStuck) {
+        $reasons += "KEK update appears stuck in firmware/platform state."
+    }
+
     $completed = $false
-    if ($secureBootEnabled -and $dbHas2023 -and $bootMgrHas2023) {
+    if ($secureBootEnabled -and $kekHas2023 -and $dbHas2023 -and $bootMgrHas2023) {
         $completed = $true
     }
 
@@ -471,6 +650,7 @@ function Get-FinalSummary {
         WindowsUEFICA2023Capable = $serv.WindowsUEFICA2023Capable
         UEFICA2023Status         = $serv.UEFICA2023Status
         UEFICA2023ErrorHex       = $serv.UEFICA2023ErrorHex
+        KekContainsCA2023        = $kekHas2023
         DbContainsCA2023         = $dbHas2023
         BootManagerHasCA2023     = $bootMgrHas2023
         Completed                = $completed
@@ -490,6 +670,7 @@ function Write-FinalSummary {
     Write-Log "WindowsUEFICA2023Capable : $($Summary.WindowsUEFICA2023Capable)"
     Write-Log "UEFICA2023Status         : $($Summary.UEFICA2023Status)"
     Write-Log "UEFICA2023ErrorHex       : $($Summary.UEFICA2023ErrorHex)"
+    Write-Log "KekContainsCA2023        : $($Summary.KekContainsCA2023)"
     Write-Log "DbContainsCA2023         : $($Summary.DbContainsCA2023)"
     Write-Log "BootManagerHasCA2023     : $($Summary.BootManagerHasCA2023)"
     Write-Log "Completed                : $($Summary.Completed)"
@@ -508,19 +689,63 @@ function Write-FinalSummary {
     Write-Log "=============================================="
 }
 
-function Cleanup-CompletionState {
-    Unregister-Continuation
-    Remove-State
+function Invoke-UpdatePhase {
+    param(
+        [Parameter(Mandatory)]
+        [int]$Flag,
+
+        [Parameter(Mandatory)]
+        [int]$NextStage,
+
+        [Parameter(Mandatory)]
+        [string]$ActionMessage,
+
+        [Parameter(Mandatory)]
+        [string]$RebootReason
+    )
+
+    Set-AvailableUpdates -Value $Flag
+    Start-SecureBootTask
+    Write-Log $ActionMessage
+
+    Register-Continuation
+    Save-State -Stage $NextStage -LastAction $ActionMessage -RetryCount 0
+
+    if ($NoReboot) {
+        Write-Log "NoReboot specified. Workflow paused after staging update. Re-run with -ContinueAfterReboot after a manual reboot." 'WARN'
+        exit 0
+    }
+
+    Restart-Now -Reason $RebootReason
 }
 
 # -------------------------------------------------------------------
 # Main
 # -------------------------------------------------------------------
 Ensure-StateRoot
-Start-Transcript -Path $TranscriptFile -Append | Out-Null
+$transcriptStarted = $false
+
+try {
+    Start-Transcript -Path $TranscriptFile -Append | Out-Null
+    $transcriptStarted = $true
+}
+catch {
+    Write-Host "Transcript could not be started: $($_.Exception.Message)"
+}
 
 try {
     Require-Admin
+
+    if ($ResetState) {
+        Write-Log "ResetState specified. Clearing saved workflow state."
+        Cleanup-CompletionState
+    }
+
+    if ($DebugSecureBootAscii) {
+        Write-Log "DebugSecureBootAscii specified. Showing Secure Boot variable previews."
+        Show-SecureBootAsciiPreview -Name 'KEK'
+        Show-SecureBootAsciiPreview -Name 'db'
+    }
 
     if ($Check) {
         Write-Log "Running in CHECK mode"
@@ -533,6 +758,7 @@ try {
         Write-Log "WindowsUEFICA2023Capable : $($compliance.WindowsUEFICA2023Capable)"
         Write-Log "UEFICA2023Status         : $($compliance.UEFICA2023Status)"
         Write-Log "UEFICA2023ErrorHex       : $($compliance.UEFICA2023ErrorHex)"
+        Write-Log "KekContainsCA2023        : $($compliance.KekContainsCA2023)"
         Write-Log "DbContainsCA2023         : $($compliance.DbContainsCA2023)"
         Write-Log "BootManagerHasCA2023     : $($compliance.BootManagerHasCA2023)"
         Write-Log "NeedsUpdate              : $($compliance.NeedsUpdate)"
@@ -553,11 +779,18 @@ try {
     Write-Log "Script path: $ThisScript"
     Show-CurrentStatus
 
-    $state = Load-State
-    $stage = [int]$state.Stage
+    if ($ContinueAfterReboot) {
+        $state = Load-State
+        $stage = [int]$state.Stage
+        Write-Log "Continuation mode detected. Resuming at stage $stage."
+    }
+    else {
+        $stage = $StageInitial
+        Write-Log "Fresh run detected. Starting at stage 0."
+    }
 
     switch ($stage) {
-        0 {
+        $StageInitial {
             Write-Log "Stage 0: Pre-checks and update decision"
 
             try {
@@ -575,112 +808,216 @@ try {
 
             Backup-BitLockerInfo
 
+            $kekHas2023 = Test-KekContainsCA2023
             $dbHas2023 = Test-DbContainsCA2023
             $bootMgrHas2023 = $false
 
             try {
-                Mount-EfiPartition
-                try {
-                    Copy-BootManager
-                }
-                finally {
-                    Dismount-EfiPartition
-                }
-
-                $bootMgrHas2023 = Test-BootManagerCertChain -FilePath $BootCopy
+                $bootMgrHas2023 = Get-BootManagerHasCA2023
             }
             catch {
                 Write-Log "Boot manager pre-check failed: $($_.Exception.Message)" 'WARN'
             }
 
-            if ($dbHas2023 -and $bootMgrHas2023) {
-                Write-Log "DB and Boot Manager already trust Windows UEFI CA 2023. No remediation needed."
+            if ($kekHas2023 -and $dbHas2023 -and $bootMgrHas2023) {
+                Write-Log "KEK, DB and Boot Manager already trust Windows UEFI CA 2023. No remediation needed."
                 $summary = Get-FinalSummary
                 Write-FinalSummary -Summary $summary
                 Cleanup-CompletionState
                 exit 0
             }
 
+            if (-not $kekHas2023) {
+                if ((Test-IsKekStuck) -and (-not $ForceRetryKek)) {
+                    Cleanup-CompletionState
+                    throw 'KEK update is still InProgress with firmware/platform error state. Not retriggering KEK to avoid a reboot loop. Use -ForceRetryKek only if you explicitly want to try again anyway.'
+                }
+
+                Invoke-UpdatePhase `
+                    -Flag $UpdateFlagKEK `
+                    -NextStage $StageValidateKEK `
+                    -ActionMessage 'Triggered KEK update.' `
+                    -RebootReason 'Reboot after KEK update trigger'
+            }
+
             if (-not $dbHas2023) {
-                Set-AvailableUpdates -Value 0x40
-                Start-SecureBootTask
-                Write-Log "Triggered DB update."
-
-                Register-Continuation
-                Save-State -Stage 1 -LastAction 'DB update triggered, rebooting to validate'
-                Restart-Now -Reason 'Reboot 1 after DB update trigger'
-            }
-            else {
-                Write-Log "DB already contains Windows UEFI CA 2023. Skipping DB apply and moving to Boot Manager update."
-
-                Set-AvailableUpdates -Value 0x100
-                Start-SecureBootTask
-                Write-Log "Triggered Boot Manager update."
-
-                Register-Continuation
-                Save-State -Stage 2 -LastAction 'Boot manager update triggered, rebooting to validate'
-                Restart-Now -Reason 'Reboot after Boot Manager update trigger'
-            }
-        }
-
-        1 {
-            Write-Log "Stage 1: Validate DB update after reboot"
-
-            $dbHas2023 = Test-DbContainsCA2023
-            if (-not $dbHas2023) {
-                $serv = Get-ServicingState
-                Write-Log ("DB does not yet show CA 2023. Current state: Capable={0}, Status={1}, Error={2}" -f `
-                    $serv.WindowsUEFICA2023Capable, $serv.UEFICA2023Status, $serv.UEFICA2023ErrorHex) 'WARN'
-                throw 'DB update did not validate after reboot. Review the log before proceeding.'
+                Invoke-UpdatePhase `
+                    -Flag $UpdateFlagDB `
+                    -NextStage $StageValidateDB `
+                    -ActionMessage 'Triggered DB update.' `
+                    -RebootReason 'Reboot after DB update trigger'
             }
 
-            Write-Log "DB update validated successfully."
-
-            Set-AvailableUpdates -Value 0x100
-            Start-SecureBootTask
-            Write-Log "Triggered Boot Manager update."
-
-            Register-Continuation
-            Save-State -Stage 2 -LastAction 'Boot manager update triggered, rebooting to validate'
-            Restart-Now -Reason 'Reboot after Boot Manager update trigger'
-        }
-
-        2 {
-            Write-Log "Stage 2: Validate Boot Manager after reboot"
-
-            Mount-EfiPartition
-            try {
-                Copy-BootManager
+            if (-not $bootMgrHas2023) {
+                Invoke-UpdatePhase `
+                    -Flag $UpdateFlagBootMgr `
+                    -NextStage $StageValidateBootMgr `
+                    -ActionMessage 'Triggered Boot Manager update.' `
+                    -RebootReason 'Reboot after Boot Manager update trigger'
             }
-            finally {
-                Dismount-EfiPartition
-            }
-
-            $bootOk = Test-BootManagerCertChain -FilePath $BootCopy
-            if (-not $bootOk) {
-                throw "Boot Manager certificate chain does not include 'Windows UEFI CA 2023'."
-            }
-
-            Write-Log "Boot Manager certificate chain includes 'Windows UEFI CA 2023'."
-
-            Register-Continuation
-            Save-State -Stage 3 -LastAction 'Boot manager validated, performing additional confirmation reboot'
-            Restart-Now -Reason 'Additional confirmation reboot'
-        }
-
-        3 {
-            Write-Log "Stage 3: Final post-reboot confirmation"
 
             $summary = Get-FinalSummary
             Write-FinalSummary -Summary $summary
 
             if ($summary.Completed) {
-                Save-State -Stage 4 -LastAction 'Completed successfully'
                 Cleanup-CompletionState
                 exit 0
             }
             else {
-                throw "Final validation failed. DbContainsCA2023=$($summary.DbContainsCA2023) BootManagerHasCA2023=$($summary.BootManagerHasCA2023)"
+                Cleanup-CompletionState
+                throw 'No update stage was triggered, but host is still not compliant.'
+            }
+        }
+
+        $StageValidateKEK {
+            Write-Log "Stage 1: Validate KEK update after reboot"
+
+            $currentState = Load-State
+            $retryCount = 0
+            if ($currentState.PSObject.Properties.Name -contains 'RetryCount') {
+                $retryCount = [int]$currentState.RetryCount
+            }
+
+            $kekHas2023 = Test-KekContainsCA2023
+            $serv = Get-ServicingState
+
+            if ($kekHas2023) {
+                Write-Log "KEK update validated successfully."
+
+                $dbHas2023 = Test-DbContainsCA2023
+                if (-not $dbHas2023) {
+                    Invoke-UpdatePhase `
+                        -Flag $UpdateFlagDB `
+                        -NextStage $StageValidateDB `
+                        -ActionMessage 'Triggered DB update.' `
+                        -RebootReason 'Reboot after DB update trigger'
+                }
+
+                $bootMgrHas2023 = $false
+                try {
+                    $bootMgrHas2023 = Get-BootManagerHasCA2023
+                }
+                catch {
+                    Write-Log "Boot manager validation pre-check failed: $($_.Exception.Message)" 'WARN'
+                }
+
+                if (-not $bootMgrHas2023) {
+                    Invoke-UpdatePhase `
+                        -Flag $UpdateFlagBootMgr `
+                        -NextStage $StageValidateBootMgr `
+                        -ActionMessage 'Triggered Boot Manager update.' `
+                        -RebootReason 'Reboot after Boot Manager update trigger'
+                }
+
+                Register-Continuation
+                Save-State -Stage $StageFinalConfirmation -LastAction 'KEK validated; proceeding to final confirmation' -RetryCount 0
+
+                if ($NoReboot) {
+                    Write-Log "NoReboot specified. Workflow paused before final confirmation reboot." 'WARN'
+                    exit 0
+                }
+
+                Restart-Now -Reason 'Additional confirmation reboot after KEK validation'
+            }
+
+            Write-Log ("KEK still not detected. Current state: Capable={0}, Status={1}, Error={2}, RetryCount={3}" -f `
+                $serv.WindowsUEFICA2023Capable, $serv.UEFICA2023Status, $serv.UEFICA2023ErrorHex, $retryCount) 'WARN'
+
+            if ($serv.UEFICA2023Status -eq 'InProgress' -and $retryCount -lt $MaxKekRetries) {
+                Write-Log "KEK stage still appears to be in progress. Scheduling another confirmation reboot instead of failing immediately." 'WARN'
+
+                Register-Continuation
+                Save-State -Stage $StageValidateKEK -LastAction 'Waiting for KEK update to finalize' -RetryCount ($retryCount + 1)
+
+                if ($NoReboot) {
+                    Write-Log "NoReboot specified. Workflow paused while waiting for KEK finalization. Re-run with -ContinueAfterReboot after a manual reboot." 'WARN'
+                    exit 0
+                }
+
+                Restart-Now -Reason 'Additional reboot while waiting for KEK update to finalize'
+            }
+
+            Cleanup-CompletionState
+            throw 'KEK update did not validate after allowed retries. This likely indicates OEM/firmware support is missing for the new Microsoft KEK on this device.'
+        }
+
+        $StageValidateDB {
+            Write-Log "Stage 2: Validate DB update after reboot"
+
+            $dbHas2023 = Test-DbContainsCA2023
+            if (-not $dbHas2023) {
+                $serv = Get-ServicingState
+                Cleanup-CompletionState
+                Write-Log ("DB does not yet show CA 2023. Current state: Capable={0}, Status={1}, Error={2}" -f `
+                    $serv.WindowsUEFICA2023Capable, $serv.UEFICA2023Status, $serv.UEFICA2023ErrorHex) 'WARN'
+                throw 'DB update did not validate after reboot. Workflow stopped.'
+            }
+
+            Write-Log "DB update validated successfully."
+
+            $bootMgrHas2023 = $false
+            try {
+                $bootMgrHas2023 = Get-BootManagerHasCA2023
+            }
+            catch {
+                Write-Log "Boot manager validation pre-check failed: $($_.Exception.Message)" 'WARN'
+            }
+
+            if (-not $bootMgrHas2023) {
+                Invoke-UpdatePhase `
+                    -Flag $UpdateFlagBootMgr `
+                    -NextStage $StageValidateBootMgr `
+                    -ActionMessage 'Triggered Boot Manager update.' `
+                    -RebootReason 'Reboot after Boot Manager update trigger'
+            }
+
+            Register-Continuation
+            Save-State -Stage $StageFinalConfirmation -LastAction 'DB validated; proceeding to final confirmation' -RetryCount 0
+
+            if ($NoReboot) {
+                Write-Log "NoReboot specified. Workflow paused before final confirmation reboot." 'WARN'
+                exit 0
+            }
+
+            Restart-Now -Reason 'Additional confirmation reboot after DB validation'
+        }
+
+        $StageValidateBootMgr {
+            Write-Log "Stage 3: Validate Boot Manager after reboot"
+
+            $bootOk = Get-BootManagerHasCA2023
+            if (-not $bootOk) {
+                Cleanup-CompletionState
+                throw "Boot Manager certificate chain does not include 'Windows UEFI CA 2023'. Workflow stopped."
+            }
+
+            Write-Log "Boot Manager certificate chain includes 'Windows UEFI CA 2023'."
+
+            Register-Continuation
+            Save-State -Stage $StageFinalConfirmation -LastAction 'Boot manager validated; performing additional confirmation reboot' -RetryCount 0
+
+            if ($NoReboot) {
+                Write-Log "NoReboot specified. Workflow paused before final confirmation reboot." 'WARN'
+                exit 0
+            }
+
+            Restart-Now -Reason 'Additional confirmation reboot'
+        }
+
+        $StageFinalConfirmation {
+            Write-Log "Stage 4: Final post-reboot confirmation"
+
+            $summary = Get-FinalSummary
+            Write-FinalSummary -Summary $summary
+
+            if ($summary.Completed) {
+                Save-State -Stage 99 -LastAction 'Completed successfully' -RetryCount 0
+                Cleanup-CompletionState
+                exit 0
+            }
+            else {
+                Cleanup-CompletionState
+                throw "Final validation failed. KekContainsCA2023=$($summary.KekContainsCA2023) DbContainsCA2023=$($summary.DbContainsCA2023) BootManagerHasCA2023=$($summary.BootManagerHasCA2023). Workflow stopped to prevent a loop."
             }
         }
 
@@ -694,6 +1031,7 @@ try {
                 exit 0
             }
             else {
+                Cleanup-CompletionState
                 exit 1
             }
         }
@@ -710,6 +1048,8 @@ catch {
         Write-Log "Failed to build final summary: $($_.Exception.Message)" 'WARN'
     }
 
+    Cleanup-CompletionState
+
     if ($Check) {
         exit 2
     }
@@ -717,5 +1057,11 @@ catch {
     exit 1
 }
 finally {
-    Stop-Transcript | Out-Null
+    if ($transcriptStarted) {
+        try {
+            Stop-Transcript | Out-Null
+        }
+        catch {
+        }
+    }
 }
