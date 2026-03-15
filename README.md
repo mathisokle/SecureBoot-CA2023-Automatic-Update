@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="./assets/securebootca2023-banner-v2.svg" alt="Secure Boot CA 2023 Update" width="100%">
+<img src="./assets/securebootca2023-banner.svg" alt="Secure Boot CA 2023 Update" width="100%">
 
 # Invoke-SecureBootCA2023Update
 
@@ -217,22 +217,6 @@ cd C:\Path\To\Script
 
 ```powershell
 .\Invoke-SecureBootCA2023Update.ps1 -Apply -NoReboot
-```
-
----
-
-## One-command download and run
-
-### Check mode
-
-```powershell
-$u='https://raw.githubusercontent.com/mathisokle/SecureBoot-CA2023-Automatic-Update/refs/heads/main/Invoke-SecureBootCA2023Update.ps1';$p="$env:TEMP\Invoke-SecureBootCA2023Update.ps1";Invoke-WebRequest -Uri $u -OutFile $p;& $p -Check
-```
-
-### Apply mode without automatic reboot
-
-```powershell
-$u='https://raw.githubusercontent.com/mathisokle/SecureBoot-CA2023-Automatic-Update/refs/heads/main/Invoke-SecureBootCA2023Update.ps1';$p="$env:TEMP\Invoke-SecureBootCA2023Update.ps1";Invoke-WebRequest -Uri $u -OutFile $p;& $p -Apply -NoReboot
 ```
 
 ---
