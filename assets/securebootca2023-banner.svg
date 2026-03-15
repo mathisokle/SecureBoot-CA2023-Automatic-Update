@@ -1,0 +1,33 @@
+<svg width="1600" height="320" viewBox="0 0 1600 320" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1600" y2="320" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#4F2AC7"/>
+      <stop offset="1" stop-color="#2E167F"/>
+    </linearGradient>
+    <linearGradient id="shield" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#B38CFF"/>
+      <stop offset="1" stop-color="#6B35FF"/>
+    </linearGradient>
+    <filter id="shadow" x="0" y="0" width="200%" height="200%">
+      <feOffset dx="0" dy="8"/>
+      <feGaussianBlur stdDeviation="8" result="blur"/>
+      <feColorMatrix in="blur" type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0.25 0"/>
+      <feBlend in="SourceGraphic"/>
+    </filter>
+  </defs>
+  <rect width="1600" height="320" rx="24" fill="url(#bg)"/>
+  <circle cx="180" cy="160" r="74" fill="#26125E" fill-opacity="0.45"/>
+  <g filter="url(#shadow)">
+    <path d="M180 78L234 109V171C234 217 202 252 180 262C158 252 126 217 126 171V109L180 78Z" fill="url(#shield)"/>
+    <path d="M180 112L207 127V158C207 185 189 205 180 210C171 205 153 185 153 158V127L180 112Z" fill="#321C85"/>
+    <path d="M180 140L190 159H170L180 140Z" fill="#CDB9FF"/>
+  </g>
+  <text x="300" y="128" fill="white" font-family="Segoe UI, Arial, sans-serif" font-size="54" font-weight="700">SECURE BOOT</text>
+  <text x="300" y="196" fill="white" font-family="Segoe UI, Arial, sans-serif" font-size="68" font-weight="800">CA 2023 UPDATE</text>
+  <g>
+    <rect x="1180" y="92" width="300" height="74" rx="18" fill="white" fill-opacity="0.92"/>
+    <circle cx="1228" cy="129" r="17" fill="#111827"/>
+    <path d="M1228 115C1220.3 115 1214 121.3 1214 129C1214 135.2 1218.1 140.4 1223.8 142.2C1224.5 142.3 1224.8 141.9 1224.8 141.5V139.4C1220.8 140.3 1220 137.6 1220 137.6C1219.4 136 1218.4 135.6 1218.4 135.6C1217.1 134.7 1218.5 134.7 1218.5 134.7C1219.9 134.8 1220.7 136.1 1220.7 136.1C1222 138.2 1224.1 137.6 1224.9 137.2C1225 136.3 1225.4 135.7 1225.9 135.3C1222.7 134.9 1219.4 133.7 1219.4 128.4C1219.4 126.9 1219.9 125.6 1220.9 124.5C1220.8 124.1 1220.3 122.7 1221 120.9C1221 120.9 1222.2 120.5 1224.8 122.2C1225.9 121.9 1227 121.8 1228 121.8C1229 121.8 1230.1 121.9 1231.2 122.2C1233.8 120.5 1235 120.9 1235 120.9C1235.7 122.7 1235.2 124.1 1235.1 124.5C1236.1 125.6 1236.6 126.9 1236.6 128.4C1236.6 133.7 1233.3 134.9 1230.1 135.3C1230.7 135.8 1231.2 136.8 1231.2 138.2V141.5C1231.2 141.9 1231.5 142.3 1232.2 142.2C1237.9 140.4 1242 135.2 1242 129C1242 121.3 1235.7 115 1228 115Z" fill="white"/>
+    <text x="1260" y="138" fill="#111827" font-family="Segoe UI, Arial, sans-serif" font-size="29" font-weight="700">README GUIDE</text>
+  </g>
+</svg>
