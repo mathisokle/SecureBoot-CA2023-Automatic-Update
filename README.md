@@ -67,7 +67,8 @@ Use the following Microsoft guidance as the primary reference set for planning a
 - **Microsoft Tech Community post:**
   <https://techcommunity.microsoft.com/blog/windows-itpro-blog/act-now-secure-boot-certificates-expire-in-june-2026/4426856>
 
-Microsoft states that all Windows devices with Secure Boot enabled must be updated to the 2023 certificates before the 2011 certificates expire, and it continues to reference the CVE-2023-24932 revocation guidance as part of the supported Secure Boot update process.
+**Microsoft states that all Windows devices with Secure Boot enabled must be updated to the 2023 certificates before the 2011 certificates expire, and it continues to reference the CVE-2023-24932 revocation guidance as part of the supported Secure Boot update process.**
+
 ---
 
 ## Important VMware Prerequisite
