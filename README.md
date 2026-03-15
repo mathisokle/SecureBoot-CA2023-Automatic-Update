@@ -4,12 +4,12 @@
 
 # Invoke-SecureBootCA2023Update
 
-**Professional operational guide for checking and applying the Microsoft Secure Boot CA 2023 update on Windows systems**
+**Operational guide for checking and applying the Microsoft Secure Boot CA 2023 update on supported Windows platforms**
 
 [![PowerShell](https://img.shields.io/badge/PowerShell-5.1%2B%20%7C%207.x-5391FE?logo=powershell&logoColor=white)](#requirements)
-[![Platform](https://img.shields.io/badge/Platform-Windows%2010%20%7C%2011%20%7C%20Server%202019%20%7C%202022%20%7C%202025-0078D4?logo=windows&logoColor=white)](#validated-platforms)
-[![Privilege](https://img.shields.io/badge/Run%20as-Administrator-important)](#execution)
-[![Secure%20Boot](https://img.shields.io/badge/Feature-Secure%20Boot-success)](#overview)
+[![Platform](https://img.shields.io/badge/Platform-Windows%2010%20%7C%2011%20%7C%20Server%202019%20%7C%202022%20%7C%202025-0078D4?logo=windows&logoColor=white)](#supported-platforms)
+[![Run as Administrator](https://img.shields.io/badge/Run%20as-Administrator-CB3837)](#execution)
+[![Secure Boot](https://img.shields.io/badge/Feature-Secure%20Boot-2EA44F)](#overview)
 
 </div>
 
@@ -17,114 +17,126 @@
 
 ## Overview
 
-`Invoke-SecureBootCA2023Update.ps1` is an administrative PowerShell script designed to:
+`Invoke-SecureBootCA2023Update.ps1` is a PowerShell script for inspecting and triggering the Microsoft-managed Secure Boot CA 2023 update workflow on supported Windows systems.
 
-- inspect the current Secure Boot CA 2023 readiness state,
-- trigger the Microsoft-managed Secure Boot update workflow,
-- evaluate KEK, DB, and Boot Manager update evidence,
-- handle reboot continuation when the Boot Manager stage requires it,
-- provide structured logging and post-run status summaries.
+It is intended to help administrators:
 
-The script supports two primary operating modes:
+- check current Secure Boot update readiness,
+- apply the CA 2023 update workflow,
+- review KEK, DB, and Boot Manager state,
+- handle reboot continuation when required,
+- produce consistent operational logs.
 
-- **Check mode**: reads the current state and reports whether the machine is already compliant.
-- **Apply mode**: triggers the official Microsoft-managed update path and verifies the resulting state.
+The script supports two primary modes:
+
+- **Check mode** to inspect status without making changes
+- **Apply mode** to trigger the Microsoft-managed update path
+
+---
+
+## Supported Platforms
+
+This documentation is written for the following supported operating systems:
+
+| Operating System | Architecture | UEFI Required | Secure Boot Required | Status |
+|---|---:|---:|---:|---|
+| Windows Server 2019 | x64 | Yes | Yes | Supported |
+| Windows Server 2022 | x64 | Yes | Yes | Supported |
+| Windows Server 2025 | x64 | Yes | Yes | Supported |
+| Windows 10 | x64 | Yes | Yes | Supported |
+| Windows 11 | x64 | Yes | Yes | Supported |
+
+### Unsupported platforms
+
+- **Windows Server 2016 and lower are not supported by this documentation**
+- Legacy BIOS systems are not supported
+- Systems without Secure Boot enabled are not in scope for this workflow
+
+If the machine is not running UEFI with Secure Boot enabled, this script is the wrong tool for the job. The universe remains cruelly consistent on that point.
+
+---
+
+## Official Microsoft Guidance
+
+Use the following Microsoft guidance as the primary reference set for planning and validation:
+
+- **Microsoft support guidance for organizations:**
+  <https://support.microsoft.com/en-us/topic/secure-boot-certificate-updates-guidance-for-it-professionals-and-organizations-e2b43f9f-b424-42df-bc6a-8476db65ab2f>
+- **Microsoft support article for Secure Boot revocations and mitigation flow:**
+  <https://support.microsoft.com/en-us/topic/how-to-manage-the-windows-boot-manager-revocations-for-secure-boot-changes-associated-with-cve-2023-24932-41a975df-beb2-40c1-99a3-b3ff139f832d>
+- **Microsoft Tech Community post:**
+  <https://techcommunity.microsoft.com/blog/windows-itpro-blog/act-now-secure-boot-certificates-expire-in-june-2026/4426856>
+
+Microsoft states that all Windows devices with Secure Boot enabled must be updated to the 2023 certificates before the 2011 certificates expire, and it continues to reference the CVE-2023-24932 revocation guidance as part of the supported Secure Boot update process. citeturn391804search2turn391804search0turn619394search7
 
 ---
 
 ## Important VMware Prerequisite
 
-### For VMware-based Windows virtual machines, complete the Secure Boot Platform Key update first
+### VMware Windows virtual machines must be remediated first
 
-Before running this script on **VMware Windows VMs**, you must first complete the manual Secure Boot Platform Key remediation described in the Broadcom knowledge article below:
+Before running this script on **VMware Windows VMs**, complete the Broadcom Secure Boot variable remediation first:
 
-**Broadcom guide:**  
-<https://knowledge.broadcom.com/external/article/423919/manual-update-of-secure-boot-variables-i.html>
+- **Broadcom knowledge article:**
+  <https://knowledge.broadcom.com/external/article/423919/manual-update-of-secure-boot-variables-i.html>
 
-### Why this matters
+This must be done **before** running `Invoke-SecureBootCA2023Update.ps1` on affected VMware guests.
 
-On affected VMware virtual machines, an invalid or outdated **Platform Key (PK)** can prevent the Secure Boot update chain from completing correctly. If this prerequisite is skipped, the Windows Secure Boot CA 2023 servicing workflow can fail even when the PowerShell script itself is working exactly as intended. Human beings do enjoy blaming the script for firmware and platform-state problems, but reality remains stubborn.
+Broadcom documents that certain VMware Windows VMs can have an invalid Platform Key state that prevents Secure Boot variable updates from working correctly. Their remediation replaces the invalid Platform Key with the Windows OEM Device Key before automated Secure Boot update steps are attempted. citeturn391804search2
 
-### Required order of operations
+### Required order of operations for VMware VMs
 
-1. **If the system is a VMware Windows VM**, complete the Broadcom PK update process first.
-2. Reboot the VM if required by the platform procedure.
-3. Confirm the machine boots normally with Secure Boot enabled.
-4. Only then run `Invoke-SecureBootCA2023Update.ps1`.
-
-### Applies to
-
-- VMware Windows Server 2019 VMs
-- VMware Windows Server 2022 VMs
-- VMware Windows Server 2025 VMs
-- VMware Windows 10 VMs
-- VMware Windows 11 VMs
-
----
-
-## Validated Platforms
-
-This README is written for the following target operating systems:
-
-| Operating System | Architecture | Secure Boot | Notes |
-|---|---:|---:|---|
-| Windows Server 2019 | x64 | Required | Run elevated PowerShell |
-| Windows Server 2022 | x64 | Required | Run elevated PowerShell |
-| Windows Server 2025 | x64 | Required | Run elevated PowerShell |
-| Windows 10 | x64 | Required | UEFI required |
-| Windows 11 | x64 | Required | UEFI required |
-
-> **Note**
-> The script is intended for systems using **UEFI + Secure Boot**. It is not relevant for legacy BIOS systems.
+1. Complete the Broadcom Platform Key remediation.
+2. Reboot the VM if the platform procedure requires it.
+3. Confirm the VM boots normally with Secure Boot enabled.
+4. Run this PowerShell script.
 
 ---
 
 ## What the Script Does
 
-The script performs the following major actions:
+### 1. Inspects Secure Boot update state
 
-### 1. Read current Secure Boot state
-
-It evaluates:
+The script checks for:
 
 - Secure Boot availability and enablement
-- registry servicing state under:
+- relevant registry values under:
   - `HKLM:\SYSTEM\CurrentControlSet\Control\SecureBoot`
   - `HKLM:\SYSTEM\CurrentControlSet\Control\SecureBoot\Servicing`
-- scheduled task presence:
+- presence of the scheduled task:
   - `\Microsoft\Windows\PI\Secure-Boot-Update`
 - recent Secure Boot related event log entries
 - Boot Manager signing evidence
 - whether KEK and DB already contain 2023 CA entries
 
-### 2. Trigger the Microsoft-managed update path
+### 2. Triggers the Microsoft-managed update workflow
 
 In **Apply mode**, the script sets:
 
 - `MicrosoftUpdateManagedOptIn = 1`
 - `AvailableUpdates = 0x5944`
 
-It then starts the scheduled task:
+It then starts:
 
 - `\Microsoft\Windows\PI\Secure-Boot-Update`
 
-### 3. Detect reboot handoff conditions
+### 3. Handles reboot continuation
 
-If the machine reaches the expected intermediary stage for the Boot Manager update, the script can:
+If the Boot Manager update stage requires a reboot, the script can:
 
 - register a continuation command in `RunOnce`,
-- reboot automatically unless `-NoReboot` is used,
-- resume validation after restart using `-ContinueAfterReboot`.
+- resume validation with `-ContinueAfterReboot`,
+- reboot automatically unless `-NoReboot` is used.
 
-### 4. Write logs and summaries
+### 4. Writes operational logs
 
-The script writes state and logs under:
+The script writes data to:
 
 ```text
 %ProgramData%\SecureBootCA2023
 ```
 
-Key files:
+Primary files:
 
 ```text
 %ProgramData%\SecureBootCA2023\Invoke-SecureBootCA2023Update.log
@@ -135,48 +147,24 @@ Key files:
 
 ## Requirements
 
-### Mandatory requirements
+### Mandatory
 
 - Windows PowerShell running **as Administrator**
 - UEFI firmware
 - Secure Boot enabled
-- Microsoft Secure Boot servicing components available on the OS
-- Scheduled task present:
+- Windows servicing components required for Secure Boot certificate servicing
+- scheduled task present:
 
 ```text
 \Microsoft\Windows\PI\Secure-Boot-Update
 ```
 
-### Recommended requirements
+### Recommended
 
-- Recent Windows updates installed
-- Maintenance window available for reboot handling
-- Console or remote management access in case platform remediation is required
-- Snapshot or backup before applying changes on production systems
-
-### VMware recommendation
-
-For VMware-hosted Windows VMs:
-
-- take a VM snapshot before platform-key remediation,
-- complete the Broadcom PK update guidance first,
-- then run this script.
-
----
-
-## Files
-
-### Primary script
-
-```text
-Invoke-SecureBootCA2023Update.ps1
-```
-
-### Generated working directory
-
-```text
-C:\ProgramData\SecureBootCA2023
-```
+- current cumulative updates installed
+- console or out-of-band access for recovery scenarios
+- tested reboot window
+- snapshot or backup before changing production systems
 
 ---
 
@@ -184,284 +172,180 @@ C:\ProgramData\SecureBootCA2023
 
 | Parameter | Purpose |
 |---|---|
-| `-Check` | Runs inspection only and returns compliance status |
-| `-Apply` | Applies the Microsoft-managed Secure Boot CA 2023 workflow |
-| `-ContinueAfterReboot` | Internal continuation stage after reboot |
-| `-NoReboot` | Prevents automatic restart during Apply mode |
+| `-Check` | Inspection only. No configuration changes are made. |
+| `-Apply` | Triggers the Microsoft-managed Secure Boot CA 2023 workflow. |
+| `-ContinueAfterReboot` | Continues post-reboot validation. |
+| `-NoReboot` | Prevents automatic restart during Apply mode. |
 
-### Parameter notes
+### Reboot handling
 
-- If no mode is supplied, the script defaults to **Check mode**.
-- `-ContinueAfterReboot` is intended for the continuation path and normally should not be used manually unless you explicitly want to resume post-reboot validation yourself.
+The only reboot-control switch exposed by the script is:
+
+```powershell
+-NoReboot
+```
+
+Use it when you want the script to stage the workflow without forcing an immediate reboot.
 
 ---
 
 ## Execution
 
-### 1. Open an elevated PowerShell session
+### Open an elevated PowerShell session
 
-Use **Run as administrator**.
+Run PowerShell **as Administrator**.
 
-### 2. Change to the script directory
+### Change to the script folder
 
 ```powershell
 cd C:\Path\To\Script
 ```
 
-### 3. Run a compliance check
+### Check current status
 
 ```powershell
 .\Invoke-SecureBootCA2023Update.ps1 -Check
 ```
 
-### 4. Apply the update workflow
+### Apply the update workflow
 
 ```powershell
 .\Invoke-SecureBootCA2023Update.ps1 -Apply
 ```
 
-### 5. Apply without automatic reboot
+### Apply the workflow without automatic reboot
 
 ```powershell
 .\Invoke-SecureBootCA2023Update.ps1 -Apply -NoReboot
 ```
 
-If a reboot is required and `-NoReboot` was used, reboot the machine manually and then run:
+---
+
+## One-command download and run
+
+Replace the placeholder raw URL with the actual location of your hosted script.
+
+### Check mode
 
 ```powershell
-.\Invoke-SecureBootCA2023Update.ps1 -Apply
+$u='https://raw.githubusercontent.com/<ORG>/<REPO>/<BRANCH>/Invoke-SecureBootCA2023Update.ps1';$p="$env:TEMP\Invoke-SecureBootCA2023Update.ps1";Invoke-WebRequest -Uri $u -OutFile $p;& $p -Check
 ```
+
+### Apply mode without automatic reboot
+
+```powershell
+$u='https://raw.githubusercontent.com/<ORG>/<REPO>/<BRANCH>/Invoke-SecureBootCA2023Update.ps1';$p="$env:TEMP\Invoke-SecureBootCA2023Update.ps1";Invoke-WebRequest -Uri $u -OutFile $p;& $p -Apply -NoReboot
+```
+
+These one-liners are intentionally conservative. Download, execute, log, survive. A rare example of civilization.
 
 ---
 
-## Recommended Operational Workflow
+## Recommended Change Workflow
 
-### Standard physical machine workflow
+### Physical or non-VMware systems
+
+1. Confirm UEFI and Secure Boot are enabled.
+2. Run the script in `-Check` mode.
+3. Review current status and event output.
+4. Run the script in `-Apply` mode.
+5. Reboot if required.
+6. Re-run `-Check` mode to confirm completion.
+
+### VMware Windows VMs
+
+1. Complete the Broadcom Platform Key remediation first.
+2. Reboot if required by the Broadcom process.
+3. Run `-Check` mode.
+4. Run `-Apply -NoReboot` if you want to control restart timing manually.
+5. Reboot during the approved maintenance window.
+6. Re-run `-Check` mode and verify events.
+
+---
+
+## Verification
+
+### Registry
+
+Review:
 
 ```text
-1. Confirm Secure Boot is enabled
-2. Run script in -Check mode
-3. Review status and log output
-4. Run script in -Apply mode
-5. Allow reboot if requested
-6. Review final compliance summary
+HKLM:\SYSTEM\CurrentControlSet\Control\SecureBoot
+HKLM:\SYSTEM\CurrentControlSet\Control\SecureBoot\Servicing
 ```
 
-### VMware Windows VM workflow
+### Scheduled task
+
+Confirm the task exists:
 
 ```text
-1. Read and complete Broadcom PK remediation procedure
-2. Snapshot the VM
-3. Confirm Secure Boot is enabled and VM boots normally
-4. Run script in -Check mode
-5. Run script in -Apply mode
-6. Reboot when prompted or required
-7. Verify final compliance state
+\Microsoft\Windows\PI\Secure-Boot-Update
 ```
 
----
+### Log output
 
-## Understanding Exit Codes
-
-| Exit Code | Meaning |
-|---:|---|
-| `0` | Success or already compliant |
-| `1` | Check completed and system still needs update |
-| `2` | Reboot required, but `-NoReboot` prevented automatic restart |
-| `99` | Failure condition encountered |
-
----
-
-## Typical Outcomes
-
-### Already compliant
-
-Indicators may include:
-
-- KEK contains the 2023 CA
-- DB contains the 2023 CA
-- Boot Manager is confirmed as signed by Windows UEFI CA 2023
-- final summary reports `Completed = True`
-
-### Update required
-
-Indicators may include:
-
-- Secure Boot DB does not contain 2023 CA(s)
-- KEK does not contain the 2023 CA
-- Boot Manager is not yet confirmed as 2023-signed
-
-### Reboot handoff reached
-
-This commonly means:
-
-- KEK/DB processing has progressed,
-- Boot Manager update confirmation requires reboot completion,
-- the script registers continuation via `RunOnce` unless prevented.
-
----
-
-## Logging and Evidence Collection
-
-The script records operational detail to:
+Review:
 
 ```text
 C:\ProgramData\SecureBootCA2023\Invoke-SecureBootCA2023Update.log
 ```
 
-It also evaluates:
+### Event Viewer
 
-- registry state,
-- scheduled task state,
-- Secure Boot variables,
-- selected system event IDs,
-- Boot Manager signing evidence via `certutil` and signature inspection.
+Check Secure Boot related events and servicing results after execution.
 
-This makes it suitable for administrative verification and change documentation. A rare moment of order in the usual infrastructure circus.
+Microsoft’s Secure Boot guidance and event documentation remain the authoritative source for interpreting the update sequence and related Secure Boot servicing behavior. citeturn391804search2turn391804search0
 
 ---
 
 ## Troubleshooting
 
-## 1. `Secure Boot is not enabled.`
+### Script reports Secure Boot is unavailable or disabled
 
-### Cause
+Verify that:
 
-The machine is not currently booted with Secure Boot active.
+- the system is installed in UEFI mode,
+- Secure Boot is enabled in firmware,
+- the platform is actually in scope for this process.
 
-### Action
+### Scheduled task is missing
 
-- enable UEFI Secure Boot in firmware or VM settings,
-- confirm the OS boots successfully,
-- rerun the script.
+If `\Microsoft\Windows\PI\Secure-Boot-Update` does not exist, the required Windows servicing components are not available on that system or the system is not yet at the required update state.
 
----
+### VMware VM does not update correctly
 
-## 2. `Scheduled task \Microsoft\Windows\PI\Secure-Boot-Update is missing.`
+Stop and complete the Broadcom remediation first. Running Windows-level automation against a broken platform key state is just structured disappointment.
 
-### Cause
+### Reboot is required but must be controlled manually
 
-The Windows servicing components required for the Secure Boot update workflow are not available.
-
-### Action
-
-- install the relevant Windows updates,
-- confirm the task exists,
-- rerun the script.
-
----
-
-## 3. `Event 1803` or message about missing OEM PK-signed KEK
-
-### Cause
-
-The system cannot proceed because the platform does not expose a valid OEM PK-signed KEK path.
-
-### Action
-
-- for VMware Windows VMs, complete the Broadcom Platform Key remediation first,
-- for physical devices, review OEM or firmware guidance,
-- rerun the script after the platform issue is corrected.
-
----
-
-## 4. `Event 1795` firmware error
-
-### Cause
-
-The firmware rejected a Secure Boot variable update.
-
-### Action
-
-- treat this as a firmware or platform issue,
-- check BIOS, UEFI, OEM, hypervisor, or VM configuration,
-- do not assume the PowerShell script is the root cause.
-
----
-
-## 5. Boot Manager not yet confirmed as 2023-signed
-
-### Cause
-
-The Boot Manager phase has not completed or a reboot is still pending.
-
-### Action
-
-- reboot if requested,
-- rerun the script in `-Apply` mode if necessary,
-- review the log and final summary.
-
----
-
-## Verification Checklist
-
-Use this checklist after execution:
-
-- [ ] System boots successfully
-- [ ] Secure Boot is enabled
-- [ ] `-Check` mode reports compliant
-- [ ] KEK contains 2023 CA
-- [ ] DB contains 2023 CA
-- [ ] Boot Manager is confirmed as CA 2023 signed
-- [ ] No blocking Event 1795 or 1803 remains
-- [ ] Final summary shows `Completed = True`
-
----
-
-## Example Commands
-
-### Simple read-only compliance check
+Use:
 
 ```powershell
-PowerShell.exe -ExecutionPolicy Bypass -File .\Invoke-SecureBootCA2023Update.ps1 -Check
+.\Invoke-SecureBootCA2023Update.ps1 -Apply -NoReboot
 ```
 
-### Apply update path interactively
+### Older Windows versions
 
-```powershell
-PowerShell.exe -ExecutionPolicy Bypass -File .\Invoke-SecureBootCA2023Update.ps1 -Apply
-```
+Windows Server 2016 and lower are not supported by this README. Do not treat this document as deployment guidance for those platforms.
 
-### Apply update path but keep reboot manual
+---
 
-```powershell
-PowerShell.exe -ExecutionPolicy Bypass -File .\Invoke-SecureBootCA2023Update.ps1 -Apply -NoReboot
+## Repository Layout
+
+```text
+.
+├── Invoke-SecureBootCA2023Update.ps1
+├── README.md
+└── assets
+    └── securebootca2023-banner-v2.svg
 ```
 
 ---
 
-## Best Practices
+## Summary
 
-- test first on non-production systems,
-- use snapshots for VMware VMs,
-- schedule a maintenance window,
-- preserve log output for audit or support review,
-- complete platform remediation before blaming automation.
+Use this script on supported Windows systems to inspect and apply the Microsoft-managed Secure Boot CA 2023 update workflow.
 
----
+For VMware Windows VMs, complete the Broadcom Secure Boot variable remediation first.
 
-## Disclaimer
-
-This script helps automate the **Windows-managed Secure Boot CA 2023 update workflow**, but it cannot override platform, firmware, OEM, or hypervisor-level failures. If the underlying PK, firmware trust chain, or Secure Boot platform state is wrong, the script will report the failure honestly instead of pretending everything is fine like half the tooling market.
-
----
-
-## Quick Start
-
-```powershell
-# 1) VMware Windows VM only: complete the Broadcom PK guide first
-# 2) Run a compliance check
-.\Invoke-SecureBootCA2023Update.ps1 -Check
-
-# 3) Apply the update workflow
-.\Invoke-SecureBootCA2023Update.ps1 -Apply
-```
-
----
-
-<div align="center">
-
-**Professional documentation for administrators who prefer clear outcomes over mystical troubleshooting rituals.**
-
-</div>
-****
+For official planning and implementation guidance, use the Microsoft support articles and Tech Community post linked above.
