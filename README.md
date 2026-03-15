@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="./assets/securebootca2023-banner.svg" alt="Secure Boot CA 2023 Update" width="100%">
+<img src="./assets/securebootca2023-banner-v2.svg" alt="Secure Boot CA 2023 Update" width="100%">
 
 # Invoke-SecureBootCA2023Update
 
@@ -223,18 +223,16 @@ cd C:\Path\To\Script
 
 ## One-command download and run
 
-Replace the placeholder raw URL with the actual location of your hosted script.
-
 ### Check mode
 
 ```powershell
-$u='[https://raw.githubusercontent.com/<ORG>/<REPO>/<BRANCH>/Invoke-SecureBootCA2023Update.ps1](https://raw.githubusercontent.com/mathisokle/SecureBoot-CA2023-Automatic-Update/refs/heads/main/Invoke-SecureBootCA2023Update.ps1)';$p="$env:TEMP\Invoke-SecureBootCA2023Update.ps1";Invoke-WebRequest -Uri $u -OutFile $p;& $p -Check
+$u='https://raw.githubusercontent.com/mathisokle/SecureBoot-CA2023-Automatic-Update/refs/heads/main/Invoke-SecureBootCA2023Update.ps1';$p="$env:TEMP\Invoke-SecureBootCA2023Update.ps1";Invoke-WebRequest -Uri $u -OutFile $p;& $p -Check
 ```
 
 ### Apply mode without automatic reboot
 
 ```powershell
-$u='[https://raw.githubusercontent.com/<ORG>/<REPO>/<BRANCH>/Invoke-SecureBootCA2023Update.ps1](https://raw.githubusercontent.com/mathisokle/SecureBoot-CA2023-Automatic-Update/refs/heads/main/Invoke-SecureBootCA2023Update.ps1)';$p="$env:TEMP\Invoke-SecureBootCA2023Update.ps1";Invoke-WebRequest -Uri $u -OutFile $p;& $p -Apply -NoReboot
+$u='https://raw.githubusercontent.com/mathisokle/SecureBoot-CA2023-Automatic-Update/refs/heads/main/Invoke-SecureBootCA2023Update.ps1';$p="$env:TEMP\Invoke-SecureBootCA2023Update.ps1";Invoke-WebRequest -Uri $u -OutFile $p;& $p -Apply -NoReboot
 ```
 
 ---
