@@ -67,8 +67,7 @@ Use the following Microsoft guidance as the primary reference set for planning a
 - **Microsoft Tech Community post:**
   <https://techcommunity.microsoft.com/blog/windows-itpro-blog/act-now-secure-boot-certificates-expire-in-june-2026/4426856>
 
-Microsoft states that all Windows devices with Secure Boot enabled must be updated to the 2023 certificates before the 2011 certificates expire, and it continues to reference the CVE-2023-24932 revocation guidance as part of the supported Secure Boot update process. citeturn391804search2turn391804search0turn619394search7
-
+Microsoft states that all Windows devices with Secure Boot enabled must be updated to the 2023 certificates before the 2011 certificates expire, and it continues to reference the CVE-2023-24932 revocation guidance as part of the supported Secure Boot update process.
 ---
 
 ## Important VMware Prerequisite
@@ -82,7 +81,7 @@ Before running this script on **VMware Windows VMs**, complete the Broadcom Secu
 
 This must be done **before** running `Invoke-SecureBootCA2023Update.ps1` on affected VMware guests.
 
-Broadcom documents that certain VMware Windows VMs can have an invalid Platform Key state that prevents Secure Boot variable updates from working correctly. Their remediation replaces the invalid Platform Key with the Windows OEM Device Key before automated Secure Boot update steps are attempted. citeturn391804search2
+Broadcom documents that certain VMware Windows VMs can have an invalid Platform Key state that prevents Secure Boot variable updates from working correctly. Their remediation replaces the invalid Platform Key with the Windows OEM Device Key before automated Secure Boot update steps are attempted. 
 
 ### Required order of operations for VMware VMs
 
