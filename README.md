@@ -309,23 +309,3 @@ Use:
 Windows Server 2016 and lower are not supported by this README. Do not treat this document as deployment guidance for those platforms.
 
 ---
-
-## Repository Layout
-
-```text
-.
-├── Invoke-SecureBootCA2023Update.ps1
-├── README.md
-└── assets
-    └── securebootca2023-banner-v2.svg
-```
-
----
-
-## Summary
-
-Use this script on supported Windows systems to inspect and apply the Microsoft-managed Secure Boot CA 2023 update workflow.
-
-For VMware Windows VMs, complete the Broadcom Secure Boot variable remediation first.
-
-For official planning and implementation guidance, use the Microsoft support articles and Tech Community post linked above.
