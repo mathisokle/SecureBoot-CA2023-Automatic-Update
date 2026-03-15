@@ -52,7 +52,7 @@ This documentation is written for the following supported operating systems:
 - Legacy BIOS systems are not supported
 - Systems without Secure Boot enabled are not in scope for this workflow
 
-If the machine is not running UEFI with Secure Boot enabled, this script is the wrong tool for the job. The universe remains cruelly consistent on that point.
+If the machine is not running UEFI with Secure Boot enabled, this script is the wrong tool for the job. 
 
 ---
 
@@ -294,7 +294,7 @@ If `\Microsoft\Windows\PI\Secure-Boot-Update` does not exist, the required Windo
 
 ### VMware VM does not update correctly
 
-Stop and complete the Broadcom remediation first. Running Windows-level automation against a broken platform key state is just structured disappointment.
+Stop and complete the Broadcom remediation first. 
 
 ### Reboot is required but must be controlled manually
 
@@ -304,8 +304,4 @@ Use:
 .\Invoke-SecureBootCA2023Update.ps1 -Apply -NoReboot
 ```
 
-### Older Windows versions
 
-Windows Server 2016 and lower are not supported by this README. Do not treat this document as deployment guidance for those platforms.
-
----
